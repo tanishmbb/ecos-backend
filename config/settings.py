@@ -52,28 +52,17 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    'django_extensions',
-
+    "django_extensions",
     # Third-party
     "rest_framework",
     "rest_framework_simplejwt",
     "corsheaders",
-
-    # COS apps
-    "users",
-    "authx",
-    "core",
-    "events",
-    "notifications",
-    "mediax",
-    "ux",
-    "gamification",
-    "projects", # n-COS Module
+    "anymail",  # If used later
 ]
 
 MIDDLEWARE = [
-
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",  # Added for PythonAnywhere
     "django.contrib.sessions.middleware.SessionMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -82,47 +71,26 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
-CORS_ALLOW_ALL_ORIGINS = False
 
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:5174",
-    "http://127.0.0.1:5174",
-    "http://localhost:5175",
-    "http://127.0.0.1:5175",
-    # Production
-    "https://forenna.me",
-    "https://www.forenna.me",
-]
-
-CORS_ALLOW_CREDENTIALS = True
-
-ROOT_URLCONF = "config.urls"
-
-TEMPLATES = [
-    {
-        "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [],
-        "APP_DIRS": True,
-        "OPTIONS": {
-            "context_processors": [
-                "django.template.context_processors.request",
-                "django.contrib.auth.context_processors.auth",
-                "django.contrib.messages.context_processors.messages",
-            ],
-        },
-    },
-]
-
-WSGI_APPLICATION = "config.wsgi.application"
-
+# ... codes ...
 
 # -------------------------------------------------------------------
 # DATABASE
 # -------------------------------------------------------------------
-# Uses MySQL if DB_NAME is set, otherwise SQLite (dev)
-if os.environ.get("DB_NAME"):
+# Use DATABASE_URL env var if available (Supabase/Heroku/Render standard)
+import dj_database_url
+
+if os.environ.get("DATABASE_URL"):
+    DATABASES = {
+        "default": dj_database_url.config(
+            default=os.environ.get("DATABASE_URL"),
+            conn_max_age=600,
+            conn_health_checks=True,
+            ssl_require=True,
+        )
+    }
+# Fallback to manual DB_NAME config which matches current local logic
+elif os.environ.get("DB_NAME"):
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",

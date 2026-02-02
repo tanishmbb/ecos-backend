@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y \
     libfreetype6-dev \
     liblcms2-dev \
     libopenjp2-7-dev \
-    libtiff5 \
+    libtiff-dev \
     poppler-utils \
  && rm -rf /var/lib/apt/lists/*
 
@@ -26,11 +26,15 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 # Copy code
 COPY . /app
 
-# Environment variable for Django settings module (replace `project` with your module)
+# Collect static files
+RUN python manage.py collectstatic --noinput || true
+
+# Environment variable for Django settings module
 ENV DJANGO_SETTINGS_MODULE=config.settings
 
-# Expose port (optional)
+# Expose port
 EXPOSE 8000
 
-# Default command (docker-compose can override)
-CMD ["gunicorn", "project.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "2"]
+# Default command
+CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "2"]
+

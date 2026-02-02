@@ -57,6 +57,17 @@ INSTALLED_APPS = [
     "rest_framework",
     "rest_framework_simplejwt",
     "corsheaders",
+
+    # COS apps
+    "users",
+    "authx",
+    "core",
+    "events",
+    "notifications",
+    "mediax",
+    "ux",
+    "gamification",
+    "projects", # n-COS Module
 ]
 
 MIDDLEWARE = [

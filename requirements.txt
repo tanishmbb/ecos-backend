@@ -16,3 +16,6 @@ djangorestframework-simplejwt==5.3.1
 supabase==2.3.0
 PyJWT==2.8.0
 google-auth==2.26.2
+requests==2.31.0
+google-api-python-client==2.111.0
+# Force Rebuild 1

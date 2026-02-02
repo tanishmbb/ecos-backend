@@ -1,0 +1,314 @@
+API Endpoints for COS Backend
+
+NOTE: All API base URL is /api/ unless otherwise specified.
+
+Testing account (dev):
+- username: tan
+- password: tanish.sneha@gmail.com
+
+---
+
+1) Admin
+- URL: /admin/
+- Methods: GET (browser)
+- Auth: Django admin session (superuser)
+- Description: Django admin UI
+
+---
+
+2) Health
+- URL: /api/health/
+- Methods: GET
+- Auth: public (AllowAny)
+- Query params: none
+- Response: {"status": "ok"|"degraded", "db": bool, "env": str, "latency_ms": int}
+- Notes: lightweight uptime probe; checks DB connectivity
+
+---
+
+3) Auth (authx)
+- Base: /api/auth/
+
+3.1 Signup
+- URL: /api/auth/signup/
+- Methods: POST
+- Auth: public (no auth)
+- Body: {"username": str, "email": str, "password": str, "role": str (optional)}
+- Response (201): {"message": "User created successfully", "username": "..."}
+- Errors: 400 with serializer errors
+
+3.2 Login (custom)
+- URL: /api/auth/login/
+- Methods: POST
+- Auth: public
+- Body: {"email": str, "password": str}
+- Response (200): {"access": "<jwt>", "refresh": "<jwt>"}
+- Errors: 400 invalid credentials
+
+3.3 Me
+- URL: /api/auth/me/
+- Methods: GET
+- Auth: Required (IsAuthenticated)
+- Response: {"id": int, "email": str, "username": str, "role": str}
+
+3.4 JWT endpoints (provided by simplejwt)
+- URL: /api/auth/jwt/login/ -> obtain token pair (POST: {"email"/"username"?}). Uses DRF SimpleJWT views
+- URL: /api/auth/jwt/refresh/ -> POST {"refresh": "..."}
+- URL: /api/auth/jwt/verify/ -> POST {"token": "..."}
+
+---
+
+4) Users
+- Base: /api/users/
+
+4.1 Me
+- URL: /api/users/me/
+- Methods: GET
+- Auth: IsAuthenticated
+- Response: serialized user (see UserSerializer)
+  Fields: id, username, email, role, phone, bio, profile_picture, verified, points
+
+4.2 Update profile
+- URL: /api/users/update/
+- Methods: PUT
+- Auth: IsAuthenticated
+- Body: {"phone": str, "bio": str, "profile_picture": <file or URL>} (partial allowed)
+- Response (200): {"message": "Profile updated"} or 400 with errors
+
+4.3 Dashboard
+- URL: /api/users/dashboard/
+- Methods: GET
+- Auth: IsAuthenticated
+- Response: {
+    "user": <UserSerializer>,
+    "stats": {total_registrations, events_attended, attendance_rate},
+    "registrations": [RegistrationSummarySerializer],
+    "upcoming_events": [RegistrationSummarySerializer],
+    "attendance": [AttendanceSummarySerializer],
+    "certificates": [CertificateSerializer]
+  }
+
+---
+
+5) Events (events)
+- Base: /api/events/
+- Common auth: many endpoints require IsAuthenticated; some are AllowAny (public views)
+
+5.1 Public/community listings
+- URL: /api/events/communities/public/
+- Methods: GET
+- Auth: AllowAny
+- Response: list of communities (branding + events count)
+
+- URL: /api/events/public/event/<int:event_id>/
+- Methods: GET
+- Auth: AllowAny
+- Response: Event detail for public approved event (EventSerializer fields)
+
+5.2 Event list + create
+- URL: /api/events/ (GET)
+  - Methods: GET
+  - Auth: IsAuthenticated
+  - Query params: community_id|community, status (upcoming|past|ongoing), mine (true), public (true), ordering, search, limit, offset
+  - Response: [EventSerializer]
+- URL: /api/events/ (POST)
+  - Methods: POST
+  - Auth: IsAuthenticated
+  - Body: EventSerializer fields (title, description, start_time, end_time, capacity, venue, banner, is_public, community_id optional)
+  - Response (201): created EventSerializer
+  - Notes: community membership check for community-scoped creation; initial status may be pending/approved depending on role
+
+5.3 Event detail
+- URL: /api/events/events/<int:pk>/
+- Methods: GET, PUT, DELETE
+- Auth: GET/PUT/DELETE require IsAuthenticated and ownership/manager checks for PUT/DELETE
+- GET response: EventSerializer
+- PUT body: partial EventSerializer fields allowed; validation: end_time > start_time, capacity >=0, cannot change community for existing event
+- DELETE: soft delete (actually deletes) returns {"message":"Event deleted"}
+
+5.4 Event registration flow
+- URL: /api/events/events/<int:event_id>/register/
+  - Methods: POST
+  - Auth: IsAuthenticated
+  - Response (201): RegistrationSerializer {id, user, event, registered_at, approved, username}
+  - Duplicate registration → 409 with {"registered": true, "registration_id": id}
+  - Capacity enforcement: 400 if full
+
+- URL: /api/events/events/<int:event_id>/registration/
+  - Methods: GET
+  - Auth: IsAuthenticated
+  - Response: {"registered": bool, "registration_id": id} or {"registered": false}
+
+- URL: /api/events/events/<int:event_id>/cancel/
+  - Methods: POST
+  - Auth: IsAuthenticated
+  - Response: {"message":"Registration canceled"} or 400 if not registered
+
+- URL: /api/events/registrations/<int:reg_id>/qr_image/
+  - Methods: GET
+  - Auth: public/no auth required (empty auth classes)
+  - Response: PNG image (image/png) representing QR for attendance (Cache-Control: no-store)
+
+5.5 Attendance / Scan QR
+- URL: /api/events/scan/<str:qr_code>/ and /api/events/attendance/scan/<str:qr_code>/
+  - Methods: POST
+  - Auth: IsAuthenticated
+  - Throttle: qr-scan (30/min)
+  - Behavior: check-in on first scan (sets check_in), check-out on second (sets check_out), returns messages and timestamps
+  - Responses (200): {message, registration_id, attendee, checked_at/checked_out_at, scanned_by, scanner_ip}
+  - 403 if scanner not authorized, 404 invalid QR
+
+5.6 Analytics and feedback
+- URL: /api/events/events/<int:event_id>/analytics/
+  - Methods: GET
+  - Auth: IsAuthenticated + user must be event manager
+  - Response: registrations, attendance totals, feedback counts and stats, timelines
+
+- URL: /api/events/events/<int:event_id>/feedback/submit/
+  - Methods: POST
+  - Auth: IsAuthenticated
+  - Body: {"rating": int (1-5), "comment": str} (see EventFeedbackSerializer)
+  - Conditions: user must be registered and event start_time <= now
+  - Response: EventFeedbackSerializer (201 or 200 if updating existing)
+
+- URL: /api/events/events/<int:event_id>/feedback/
+  - Methods: GET
+  - Auth: IsAuthenticated + event manager
+  - Response: [EventFeedbackSerializer]
+
+- URL: /api/events/events/<int:event_id>/feedback/stats/
+  - Methods: GET
+  - Auth: IsAuthenticated + event manager
+  - Response: {event, average_rating, total_feedback, distribution: [{rating, count}, ...]}
+
+5.7 Announcements
+- URL: /api/events/events/<int:event_id>/announcements/
+  - Methods: GET, POST
+  - Auth: GET: registered users or managers; POST: only managers
+  - GET: returns list of AnnouncementSerializer
+  - POST Body: {"title": str, "body": str, "is_important": bool}
+  - POST Response: AnnouncementSerializer (201)
+
+5.8 Certificates
+- URL (issue): /api/events/event/<int:event_id>/certificate/<int:user_id>/
+  - Methods: POST
+  - Auth: IsAuthenticated + only event organizer or admin
+  - Response (201): CertificateSerializer {id, registration, user, event, issued_at, pdf, pdf_url}
+- URL (verify): /api/events/event/<int:event_id>/certificate/verify/<str:cert_token>/
+  - Methods: GET
+  - Auth: AllowAny (public)
+  - Throttle: cert-verify
+  - Response: {"valid": true, "certificate_id": id, "event_id": id, "event": str, "user": str, "issued_at": datetime, "pdf_url": url}
+
+5.9 "My" endpoints
+- GET /api/events/me/upcoming/ → list enriched upcoming registrations (IsAuthenticated)
+- GET /api/events/me/past/ → list enriched past registrations (IsAuthenticated)
+- GET /api/events/me/announcements/ → announcements for user's registered events
+- GET /api/events/me/certificates/ → certificates for current user
+- GET /api/events/me/dashboard/ → compact dashboard
+- GET /api/events/me/communities/ → list communities current user belongs to
+- POST /api/events/me/communities/<int:community_id>/set_active/ → set active community
+- GET /api/events/me/active-context/ → returns active community snapshot + shortcuts
+
+5.10 Communities (in events)
+- GET/POST /api/events/communities/ → list/create communities (POST requires auth and valid body)
+- GET /api/events/communities/<int:community_id>/members/ → list members (managers only)
+- POST /api/events/communities/<int:community_id>/members/add/ → add member (owner only)
+- GET /api/events/communities/<int:community_id>/overview/ → community overview + stats (managers only)
+- GET /api/events/communities/<int:community_id>/events/ → list events in community (member only)
+- GET /api/events/public/<community_slug>/ → public community events (AllowAny)
+- GET /api/events/communities/<int:community_id>/members/ → community members list (managers only)
+
+5.11 Event team management
+- GET /api/events/events/<int:event_id>/team/ → list team members (managers only)
+- POST /api/events/events/<int:event_id>/team/ → add team member (body: {user_id, role})
+- PATCH /api/events/events/<int:event_id>/team/<int:member_id>/ → change role (body: {role})
+- DELETE /api/events/events/<int:event_id>/team/<int:member_id>/ → remove (sets is_active=false)
+
+5.12 Debug / utilities
+- GET /api/events/debug/permissions/?event_id=<id> → debug permissions (IsAdminUser restricted)
+- GET /api/events/organizer/analytics/ → GET organizer analytics (organizer/admin roles)
+- GET /api/events/me/organizer-dashboard/ → Organizer dashboard
+- GET /api/events/event/<int:event_id>/analytics/ (see above)
+
+---
+
+6) Core (core)
+- Base: /api/core/
+
+6.1 Community join
+- URL: /api/core/<int:community_id>/join/
+- Methods: POST
+- Auth: IsAuthenticated
+- Response: {"joined": bool, "community_id": id, "role": str}
+
+6.2 Feed
+- URL: /api/core/feed/
+- Methods: GET
+- Auth: IsAuthenticated
+- Response: [FeedSerializer] (fields: id, type, created_at, related items)
+
+6.3 Announcements
+- URL: /api/core/announcements/ (GET)
+- URL: /api/core/announcements/create/ (POST) - Only organizers/admins can POST
+- POST Body: Announcement fields
+
+6.4 Invites
+- POST /api/core/communities/<int:community_id>/invite/generate/ → create invite (body: role, max_uses?, expires_at?); response: invite data
+- POST /api/core/communities/join/<str:token>/ → join by token (IsAuthenticated)
+  - Response: {"detail": "Joined community successfully."..., community_id, membership_role}
+
+6.5 Community members management
+- GET /api/core/communities/<int:community_id>/members/ → list members (managers only)
+- PATCH /api/core/communities/<int:community_id>/members/<int:membership_id>/ → change role
+- DELETE /api/core/communities/<int:community_id>/members/<int:membership_id>/ → remove member
+- POST /api/core/communities/<int:community_id>/transfer-ownership/ → transfer owner (body: new_owner_membership_id)
+
+6.6 Notifications
+- GET /api/core/notifications/me/ → list notifications (query param unread=true filters)
+- POST /api/core/notifications/me/ → mark read (body: {ids: [..]} or omit to mark all)
+
+---
+
+7) UX (ux)
+- Base: /api/ux/
+- These endpoints provide higher-level UI-focused payloads (meta/data wrappers)
+
+7.1 Dashboards
+- GET /api/ux/me/dashboard/summary/ → summary stats (IsAuthenticated)
+- GET /api/ux/me/dashboard/events/ → events for dashboard (IsAuthenticated)
+- GET /api/ux/me/dashboard/communities/ → communities data (IsAuthenticated)
+- GET /api/ux/me/dashboard/notifications/ → returns notifications + POST to mark read
+
+7.2 Event discovery
+- GET /api/ux/events/upcoming/ → public
+- GET /api/ux/events/my-communities/ → IsAuthenticated
+- GET /api/ux/events/trending/ → public
+- GET /api/ux/events/recommended/ → IsAuthenticated
+
+7.3 Organizer-focused
+- GET /api/ux/organizer/events/summary/ → IsAuthenticated
+- GET /api/ux/organizer/events/<int:event_id>/stats/ → IsAuthenticated + must manage event
+- GET /api/ux/organizer/community/analytics/?community_id=<id> → IsAuthenticated; body: none
+
+---
+
+Notes on authentication & headers:
+- Primary auth: Bearer JWT (Authorization: Bearer <access_token>) via SimpleJWT
+- Session auth and Basic auth are also allowed for certain endpoints (admin, tests)
+- Many endpoints accept "X-Community-ID" header or ?community_id query param to scope results
+
+---
+
+Serializers & key response fields (summary):
+- UserSerializer: id, username, email, role, phone, bio, profile_picture, verified, points
+- EventSerializer: id, organizer, organizer_name, title, description, start_time, end_time, capacity, venue, banner, is_public, created_at, community_id, community_name
+- RegistrationSerializer: id, user, event, registered_at, approved, username
+- AttendanceSerializer: id, user, event, check_in, check_out, qr_code
+- CertificateSerializer: id, registration, user, event, issued_at, pdf, pdf_url
+- AnnouncementSerializer: id, event, event_title, posted_by, posted_by_username, title, body, is_important, created_at
+- EventFeedbackSerializer: id, event, event_title, user, username, rating, comment, created_at, updated_at
+
+---
+
+I have documented every route defined under `config.urls` and all included app `urls.py`. If you want, I can (1) include example request/response JSON payloads for each endpoint, (2) add required HTTP status codes per endpoint, and (3) extract test cases that assert specific behavior and link them to endpoints for QA/contract tests.
